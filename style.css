@@ -1,0 +1,174 @@
+body {
+  font-family: Arial, sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  margin: 0;
+  background-color: #f5f7fa;
+  color: #2d3748;
+}
+
+.card {
+  background: #ffffff;
+  padding: 24px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  width: 100%;
+  max-width: 800px;
+  margin: 20px;
+  transition: transform 0.2s ease-in-out;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+}
+
+h1, h2, h3 {
+  color: #2d3748;
+  margin-bottom: 16px;
+}
+
+label {
+  display: block;
+  margin: 8px 0 4px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #4a5568;
+}
+
+input, select, button {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  margin: 8px 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  box-sizing: border-box;
+  font-size: 16px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+input:focus, select:focus, button:focus {
+  outline: none;
+  border-color: #4299e1;
+  box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.2);
+}
+
+button {
+  background-color: #4299e1;
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background-color 0.2s;
+}
+
+button:hover {
+  background-color: #3182ce;
+}
+
+.loader {
+  text-align: center;
+  font-size: 16px;
+  color: #4299e1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.msg {
+  padding: 12px;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 14px;
+  margin: 8px 0;
+}
+
+.msg.success {
+  background-color: #e6fffa;
+  color: #2c7a7b;
+}
+
+.msg.error {
+  background-color: #fff1f2;
+  color: #9b2c2c;
+}
+
+video {
+  width: 100%;
+  max-height: 300px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin: 8px 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+}
+
+th, td {
+  border: 1px solid #e2e8f0;
+  padding: 12px;
+  text-align: left;
+  font-size: 14px;
+}
+
+th {
+  background-color: #edf2f7;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+#qrcode {
+  padding: 20px;
+  background: #ffffff;
+  text-align: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin: 16px 0;
+}
+
+.pagination {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+@media (max-width: 600px) {
+  .card {
+    padding: 16px;
+    max-width: 90%;
+  }
+  table {
+    font-size: 13px;
+  }
+  th, td {
+    padding: 8px;
+  }
+  button, input, select {
+    padding: 10px;
+    font-size: 14px;
+  }
+  video {
+    max-height: 200px;
+  }
+  #statsChart {
+    max-height: 200px;
+  }
+}
+
+@media (max-width: 400px) {
+  h1 {
+    font-size: 20px;
+  }
+  h2 {
+    font-size: 18px;
+  }
+  button, input, select {
+    padding: 8px;
+  }
+}
