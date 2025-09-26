@@ -102,17 +102,23 @@
     const perPage = 10;
     let chart = null;
 
-    function showToast(message, type = 'info') {
+    async function showToast(message, type = 'info') {
       const msg = document.getElementById('empMsg');
       msg.textContent = message;
       msg.className = `msg ${type}`;
-      setTimeout(() => (msg.textContent = ''), 3000);
+      setTimeout(() => (msg.textContent = ''), 5000);
     }
 
     async function loadEmployees() {
-      const { data, error } = await supabase.from('employees').select('*');
+      document.getElementById('loader').style.display = 'block';
+      const { data, error } = await supabase
+        .from('employees')
+        .select('*')
+        .order('created_at', { ascending: false });
+      document.getElementById('loader').style.display = 'none';
       if (error) {
-        showToast('Erreur lors du chargement des employés.', 'error');
+        showToast(`Erreur chargement employés : ${error.message}`, 'error');
+        console.error('Load employees error:', error);
         return;
       }
       const tbody = document.querySelector('#employeesTable tbody');
@@ -123,10 +129,13 @@
           <td>${emp.email}</td>
           <td>${emp.full_name}</td>
           <td>${emp.shift}</td>
-          <td><button onclick="deleteEmployee(${emp.id})" aria-label="Supprimer ${emp.full_name}"><i class="fas fa-trash"></i></button></td>
+          <td><button class="deleteBtn" data-id="${emp.id}" aria-label="Supprimer ${emp.full_name}"><i class="fas fa-trash"></i></button></td>
         `;
         tbody.appendChild(tr);
       });
+      document.querySelectorAll('.deleteBtn').forEach(btn =>
+        btn.addEventListener('click', () => deleteEmployee(btn.dataset.id))
+      );
     }
 
     async function deleteEmployee(id) {
@@ -134,7 +143,8 @@
       const { error } = await supabase.from('employees').delete().eq('id', id);
       document.getElementById('loader').style.display = 'none';
       if (error) {
-        showToast('Erreur lors de la suppression.', 'error');
+        showToast(`Erreur suppression : ${error.message}`, 'error');
+        console.error('Delete error:', error);
       } else {
         showToast('Employé supprimé.');
         await supabase.from('logs').insert({
@@ -147,13 +157,18 @@
 
     async function loadPointages(filterEmployee = '', filterDate = '') {
       document.getElementById('loader').style.display = 'block';
-      let query = supabase.from('pointages').select('*, employees(full_name)', { count: 'exact' }).range((page - 1) * perPage, page * perPage - 1);
+      let query = supabase
+        .from('pointages')
+        .select('id, timestamp, selfie_url, employees(email, full_name)', { count: 'exact' })
+        .range((page - 1) * perPage, page * perPage - 1)
+        .order('timestamp', { ascending: false });
       if (filterEmployee) query = query.eq('employees.email', filterEmployee);
       if (filterDate) query = query.eq('timestamp::date', filterDate);
       const { data, error, count } = await query;
       document.getElementById('loader').style.display = 'none';
       if (error) {
-        showToast('Erreur lors du chargement des pointages.', 'error');
+        showToast(`Erreur chargement pointages : ${error.message}`, 'error');
+        console.error('Load pointages error:', error);
         return;
       }
       const tbody = document.querySelector('#pointagesTable tbody');
@@ -163,7 +178,7 @@
         tr.innerHTML = `
           <td>${new Date(p.timestamp).toLocaleString()}</td>
           <td>${p.employees?.full_name || 'Inconnu'}</td>
-          <td><a href="${p.selfie_url}" target="_blank" aria-label="Voir selfie">Voir</a></td>
+          <td>${p.selfie_url ? `<a href="${p.selfie_url}" target="_blank">Voir</a>` : 'N/A'}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -173,10 +188,14 @@
 
     async function exportCsv() {
       document.getElementById('loader').style.display = 'block';
-      const { data, error } = await supabase.from('pointages').select('timestamp, employees(full_name)').order('timestamp', { ascending: false });
+      const { data, error } = await supabase
+        .from('pointages')
+        .select('timestamp, employees(full_name)')
+        .order('timestamp', { ascending: false });
       document.getElementById('loader').style.display = 'none';
       if (error) {
-        showToast('Erreur lors de l’export CSV.', 'error');
+        showToast(`Erreur export CSV : ${error.message}`, 'error');
+        console.error('Export CSV error:', error);
         return;
       }
       const csv = [
@@ -194,81 +213,64 @@
 
     async function loadStats() {
       document.getElementById('loader').style.display = 'block';
-      const { data: total, error: totalError } = await supabase.from('pointages').select('id', { count: 'exact' });
-      const { data: today, error: todayError } = await supabase
-        .from('pointages')
-        .select('id', { count: 'exact' })
-        .gte('timestamp', new Date().toISOString().split('T')[0]);
-      const { data: active, error: activeError } = await supabase
-        .from('pointages')
-        .select('employee_id', { count: 'exact', distinct: true })
-        .gte('timestamp', new Date().toISOString().split('T')[0]);
-      const { data: byDay, error: byDayError } = await supabase
-        .from('pointages')
-        .select('timestamp')
-        .gte('timestamp', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
-        .order('timestamp');
+      const [totalRes, todayRes, activeRes, byDayRes] = await Promise.all([
+        supabase.from('pointages').select('id', { count: 'exact' }),
+        supabase.from('pointages').select('id', { count: 'exact' }).gte('timestamp', new Date().toISOString().split('T')[0]),
+        supabase.from('pointages').select('employee_id', { count: 'exact', distinct: true }).gte('timestamp', new Date().toISOString().split('T')[0]),
+        supabase.from('pointages').select('timestamp').gte('timestamp', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()).order('timestamp'),
+      ]);
       document.getElementById('loader').style.display = 'none';
 
-      if (totalError || todayError || activeError || byDayError) {
-        showToast('Erreur lors du chargement des stats.', 'error');
+      if (totalRes.error || todayRes.error || activeRes.error || byDayRes.error) {
+        showToast(`Erreur stats : ${totalRes.error?.message || todayRes.error?.message || activeRes.error?.message || byDayRes.error?.message}`, 'error');
         return;
       }
 
-      const dailyCounts = byDay.reduce((acc, p) => {
+      const dailyCounts = byDayRes.data.reduce((acc, p) => {
         const date = new Date(p.timestamp).toLocaleDateString();
         acc[date] = (acc[date] || 0) + 1;
         return acc;
       }, {});
-      const labels = Object.keys(dailyCounts);
-      const data = Object.values(dailyCounts);
+      const labels = ['Total', 'Aujourd’hui', 'Actifs aujourd’hui', ...Object.keys(dailyCounts)];
+      const data = [totalRes.count, todayRes.count, activeRes.count, ...Object.values(dailyCounts)];
 
       if (chart) chart.destroy();
       chart = new Chart(document.getElementById('statsChart'), {
         type: 'bar',
-        data: {
-          labels: ['Total', 'Aujourd’hui', 'Actifs aujourd’hui', ...labels],
-          datasets: [{
-            label: 'Pointages',
-            data: [total.length, today.length, active.length, ...data],
-            backgroundColor: '#4299e1',
-          }],
-        },
-        options: {
-          scales: { y: { beginAtZero: true } },
-          plugins: { legend: { display: false } },
-        },
+        data: { labels, datasets: [{ label: 'Pointages', data, backgroundColor: '#4299e1' }] },
+        options: { scales: { y: { beginAtZero: true } }, plugins: { legend: { display: false } } },
       });
     }
 
     async function loadSelfies() {
       document.getElementById('loader').style.display = 'block';
-      const { data, error } = await supabase.from('pointages').select('timestamp, selfie_url, employees(full_name)').order('timestamp', { ascending: false });
+      const { data, error } = await supabase
+        .from('pointages')
+        .select('timestamp, selfie_url, employees(full_name)')
+        .order('timestamp', { ascending: false });
       document.getElementById('loader').style.display = 'none';
       if (error) {
-        showToast('Erreur lors du chargement des selfies.', 'error');
+        showToast(`Erreur selfies : ${error.message}`, 'error');
+        console.error('Load selfies error:', error);
         return;
       }
-      const selfiesByDay = data.reduce((acc, p) => {
-        const date = new Date(p.timestamp).toLocaleDateString();
-        acc[date] = acc[date] || [];
-        acc[date].push({ url: p.selfie_url, name: p.employees?.full_name || 'Inconnu' });
-        return acc;
-      }, {});
+      const selfiesByDay = _.groupBy(data, p => new Date(p.timestamp).toLocaleDateString());
       const selfiesDiv = document.getElementById('selfies');
       selfiesDiv.innerHTML = '';
       for (const [date, selfies] of Object.entries(selfiesByDay)) {
         const dayDiv = document.createElement('div');
         dayDiv.innerHTML = `<h3>${date}</h3>`;
         selfies.forEach(s => {
-          const img = document.createElement('img');
-          img.src = s.url;
-          img.alt = `Selfie de ${s.name}`;
-          img.title = s.name;
-          img.style.width = '100px';
-          img.style.borderRadius = '4px';
-          img.style.margin = '4px';
-          dayDiv.appendChild(img);
+          if (s.selfie_url) {
+            const img = document.createElement('img');
+            img.src = s.selfie_url;
+            img.alt = `Selfie de ${s.employees?.full_name || 'Inconnu'}`;
+            img.title = s.employees?.full_name || 'Inconnu';
+            img.style.width = '100px';
+            img.style.borderRadius = '4px';
+            img.style.margin = '4px';
+            dayDiv.appendChild(img);
+          }
         });
         selfiesDiv.appendChild(dayDiv);
       }
@@ -276,10 +278,14 @@
 
     async function loadLogs() {
       document.getElementById('loader').style.display = 'block';
-      const { data, error } = await supabase.from('logs').select('timestamp, event, user_id').order('timestamp', { ascending: false });
+      const { data, error } = await supabase
+        .from('logs')
+        .select('timestamp, event, user_id')
+        .order('timestamp', { ascending: false });
       document.getElementById('loader').style.display = 'none';
       if (error) {
-        showToast('Erreur lors du chargement des logs.', 'error');
+        showToast(`Erreur logs : ${error.message}`, 'error');
+        console.error('Load logs error:', error);
         return;
       }
       const tbody = document.querySelector('#logsTable tbody');
@@ -295,116 +301,122 @@
       });
     }
 
-    document.getElementById('createEmpBtn').onclick = async () => {
+    document.getElementById('createEmpBtn').addEventListener('click', async () => {
       const email = document.getElementById('empEmail').value.trim();
-      const password = document.getElementById('empPass').value;
+      const password = document.getElementById('empPass').value.trim();
       const full_name = document.getElementById('empName').value.trim();
       const shift = document.getElementById('empShift').value;
 
-      if (!email || !password) {
-        showToast('Email et mot de passe requis', 'error');
+      if (!email || !password || !full_name) {
+        showToast('Email, mot de passe et nom requis.', 'error');
         return;
       }
       if (!/^(?=.*[A-Z])(?=.*\d).{8,}$/.test(password)) {
-        showToast('Mot de passe doit avoir 8+ caractères, 1 majuscule, 1 chiffre.', 'error');
+        showToast('Mot de passe : 8+ caractères, 1 majuscule, 1 chiffre.', 'error');
         return;
       }
 
       document.getElementById('loader').style.display = 'block';
-      const { data: session } = await supabase.auth.getSession();
-      const token = session?.session?.access_token;
-      if (!token) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
         showToast('Session expirée, reconnecte-toi.', 'error');
         document.getElementById('loader').style.display = 'none';
         return;
       }
 
-      const res = await fetch('/functions/v1/create-employee', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ email, password, full_name, shift })
-      });
+      try {
+        const { error: authError } = await supabase.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: { full_name, shift, role: 'employe' },
+        });
+        if (authError) throw authError;
 
-      document.getElementById('loader').style.display = 'none';
-      if (!res.ok) {
-        const txt = await res.text();
-        showToast(`Erreur: ${txt}`, 'error');
-        return;
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert({ id: user.id, role: 'employe' })
+          .eq('id', user.id);
+        if (profileError) throw profileError;
+
+        await supabase.from('logs').insert({
+          event: `Création employé : ${email}`,
+          user_id: user.id,
+        });
+        showToast('Employé créé avec succès !', 'success');
+        loadEmployees();
+      } catch (error) {
+        showToast(`Erreur création : ${error.message}`, 'error');
+        console.error('Create employee error:', error);
       }
-
-      showToast('Employé créé avec succès !', 'success');
-      await supabase.from('logs').insert({
-        event: `Création employé: ${email}`,
-        user_id: (await supabase.auth.getUser()).data.user.id,
-      });
-      loadEmployees();
+      document.getElementById('loader').style.display = 'none';
       document.getElementById('empEmail').value = '';
       document.getElementById('empPass').value = '';
       document.getElementById('empName').value = '';
       document.getElementById('empShift').value = 'Non défini';
-    };
+    });
 
-    document.getElementById('filterBtn').onclick = _.debounce(() => {
+    document.getElementById('filterBtn').addEventListener('click', _.debounce(async () => {
       const filterEmployee = document.getElementById('filterEmployee').value.trim();
       const filterDate = document.getElementById('filterDate').value;
       page = 1;
-      loadPointages(filterEmployee, filterDate);
-    }, 300);
+      await loadPointages(filterEmployee, filterDate);
+    }, 300));
 
-    document.getElementById('prevPageBtn').onclick = () => {
+    document.getElementById('prevPageBtn').addEventListener('click', () => {
       if (page > 1) {
         page--;
-        loadPointages(
-          document.getElementById('filterEmployee').value.trim(),
-          document.getElementById('filterDate').value
-        );
+        loadPointages(document.getElementById('filterEmployee').value.trim(), document.getElementById('filterDate').value);
       }
-    };
+    });
 
-    document.getElementById('nextPageBtn').onclick = () => {
+    document.getElementById('nextPageBtn').addEventListener('click', () => {
       page++;
-      loadPointages(
-        document.getElementById('filterEmployee').value.trim(),
-        document.getElementById('filterDate').value
-      );
-    };
+      loadPointages(document.getElementById('filterEmployee').value.trim(), document.getElementById('filterDate').value);
+    });
 
-    document.getElementById('exportCsvBtn').onclick = exportCsv;
-    document.getElementById('statsBtn').onclick = loadStats;
-    document.getElementById('selfiesBtn').onclick = loadSelfies;
-    document.getElementById('logsBtn').onclick = loadLogs;
+    document.getElementById('exportCsvBtn').addEventListener('click', exportCsv);
+    document.getElementById('statsBtn').addEventListener('click', loadStats);
+    document.getElementById('selfiesBtn').addEventListener('click', loadSelfies);
+    document.getElementById('logsBtn').addEventListener('click', loadLogs);
 
-    document.getElementById('downloadQrBtn').onclick = () => {
+    document.getElementById('downloadQrBtn').addEventListener('click', () => {
       html2canvas(document.getElementById('qrcode')).then(canvas => {
         const link = document.createElement('a');
         link.href = canvas.toDataURL('image/png');
         link.download = 'qrcode.png';
         link.click();
       });
-    };
+    });
 
     QRCode.toCanvas(document.getElementById('qrcode'), 'POINTAGE_QR_FIXE', { width: 200 }, err => {
-      if (err) console.error(err);
+      if (err) console.error('QR Code error:', err);
     });
 
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) {
-        location.href = 'index.html';
+        window.location.href = 'index.html';
         return;
       }
       const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      if (profile?.role !== 'admin') {
-        location.href = 'employe.html';
+      if (!profile || profile.role !== 'admin') {
+        window.location.href = 'employe.html';
       } else {
-        loadEmployees();
-        loadPointages();
+        await loadEmployees();
+        await loadPointages();
       }
     });
 
-    window.deleteEmployee = deleteEmployee;
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        showToast(`Erreur déconnexion : ${error.message}`, 'error');
+        console.error('Logout error:', error);
+      } else {
+        showToast('Déconnecté, retour à la connexion...', 'success');
+        window.location.href = 'index.html';
+      }
+    });
   </script>
 </body>
 </html>
