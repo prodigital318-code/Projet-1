@@ -1,5 +1,4 @@
 // config.js
-
 import { createClient } from "@supabase/supabase-js";
 
 // Ton URL et ta clé publique Supabase
