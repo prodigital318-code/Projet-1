@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tableau de bord Admin</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js"></script>
+</head>
+<body>
+  <div class="card">
+    <h1>Tableau de bord Admin</h1>
+    <button id="logoutBtn" aria-label="Déconnexion"><i class="fas fa-sign-out-alt"></i> Déconnexion</button>
+
+    <h2>Ajouter un employé</h2>
+    <label for="empEmail">Email</label>
+    <input id="empEmail" type="email" placeholder="Email" aria-label="Email de l’employé">
+    <label for="empPass">Mot de passe</label>
+    <input id="empPass" type="password" placeholder="Mot de passe (min 8 caractères)" aria-label="Mot de passe">
+    <label for="empName">Nom complet</label>
+    <input id="empName" type="text" placeholder="Nom complet" aria-label="Nom complet">
+    <label for="empShift">Shift</label>
+    <select id="empShift" aria-label="Shift">
+      <option value="Non défini">Non défini</option>
+      <option value="Matin">Matin</option>
+      <option value="Soir">Soir</option>
+      <option value="Nuit">Nuit</option>
+    </select>
+    <button id="createEmpBtn"><i class="fas fa-user-plus"></i> Créer l’employé</button>
+    <div id="loader" class="loader" style="display: none;"><i class="fas fa-spinner fa-spin"></i> Chargement...</div>
+    <div id="empMsg" class="msg"></div>
+
+    <h2>QR Code</h2>
+    <canvas id="qrcode"></canvas>
+    <button id="downloadQrBtn"><i class="fas fa-download"></i> Télécharger QR</button>
+
+    <h2>Dossier employés</h2>
+    <table id="employeesTable">
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Nom</th>
+          <th>Shift</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <h2>Historique des pointages</h2>
+    <label for="filterEmployee">Filtrer par email</label>
+    <input id="filterEmployee" type="text" placeholder="Filtrer par email" aria-label="Filtrer par email">
+    <label for="filterDate">Filtrer par date</label>
+    <input id="filterDate" type="date" aria-label="Filtrer par date">
+    <button id="filterBtn"><i class="fas fa-filter"></i> Filtrer</button>
+    <div class="pagination">
+      <button id="prevPageBtn" disabled><i class="fas fa-chevron-left"></i> Précédent</button>
+      <button id="nextPageBtn"><i class="fas fa-chevron-right"></i> Suivant</button>
+    </div>
+    <button id="exportCsvBtn"><i class="fas fa-file-csv"></i> Exporter CSV</button>
+    <table id="pointagesTable">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Employé</th>
+          <th>Selfie</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <h2>Statistiques</h2>
+    <button id="statsBtn"><i class="fas fa-chart-bar"></i> Voir Statistiques</button>
+    <canvas id="statsChart"></canvas>
+
+    <h2>Selfies par jour</h2>
+    <button id="selfiesBtn"><i class="fas fa-camera"></i> Voir Selfies</button>
+    <div id="selfies"></div>
+
+    <h2>Logs d’audit</h2>
+    <button id="logsBtn"><i class="fas fa-history"></i> Voir Logs</button>
+    <table id="logsTable">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Événement</th>
+          <th>Utilisateur</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script type="module">
+    import { supabase } from './config.js';
+    import QRCode from 'https://cdn.jsdelivr.net/npm/qrcode@1.5.0/build/qrcode.min.js';
+
+    let page = 1;
+    const perPage = 10;
+    let chart = null;
+
+    function showToast(message, type = 'info') {
+      const msg = document.getElementById('empMsg');
+      msg.textContent = message;
+      msg.className = `msg ${type}`;
+      setTimeout(() => (msg.textContent = ''), 3000);
+    }
+
+    async function loadEmployees() {
+      const { data, error } = await supabase.from('employees').select('*');
+      if (error) {
+        showToast('Erreur lors du chargement des employés.', 'error');
+        return;
+      }
+      const tbody = document.querySelector('#employeesTable tbody');
+      tbody.innerHTML = '';
+      data.forEach(emp => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${emp.email}</td>
+          <td>${emp.full_name}</td>
+          <td>${emp.shift}</td>
+          <td><button onclick="deleteEmployee(${emp.id})" aria-label="Supprimer ${emp.full_name}"><i class="fas fa-trash"></i></button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function deleteEmployee(id) {
+      document.getElementById('loader').style.display = 'block';
+      const { error } = await supabase.from('employees').delete().eq('id', id);
+      document.getElementById('loader').style.display = 'none';
+      if (error) {
+        showToast('Erreur lors de la suppression.', 'error');
+      } else {
+        showToast('Employé supprimé.');
+        await supabase.from('logs').insert({
+          event: `Suppression employé ID: ${id}`,
+          user_id: (await supabase.auth.getUser()).data.user.id,
+        });
+        loadEmployees();
+      }
+    }
+
+    async function loadPointages(filterEmployee = '', filterDate = '') {
+      document.getElementById('loader').style.display = 'block';
+      let query = supabase.from('pointages').select('*, employees(full_name)', { count: 'exact' }).range((page - 1) * perPage, page * perPage - 1);
+      if (filterEmployee) query = query.eq('employees.email', filterEmployee);
+      if (filterDate) query = query.eq('timestamp::date', filterDate);
+      const { data, error, count } = await query;
+      document.getElementById('loader').style.display = 'none';
+      if (error) {
+        showToast('Erreur lors du chargement des pointages.', 'error');
+        return;
+      }
+      const tbody = document.querySelector('#pointagesTable tbody');
+      tbody.innerHTML = '';
+      data.forEach(p => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${new Date(p.timestamp).toLocaleString()}</td>
+          <td>${p.employees?.full_name || 'Inconnu'}</td>
+          <td><a href="${p.selfie_url}" target="_blank" aria-label="Voir selfie">Voir</a></td>
+        `;
+        tbody.appendChild(tr);
+      });
+      document.getElementById('prevPageBtn').disabled = page === 1;
+      document.getElementById('nextPageBtn').disabled = (page * perPage) >= count;
+    }
+
+    async function exportCsv() {
+      document.getElementById('loader').style.display = 'block';
+      const { data, error } = await supabase.from('pointages').select('timestamp, employees(full_name)').order('timestamp', { ascending: false });
+      document.getElementById('loader').style.display = 'none';
+      if (error) {
+        showToast('Erreur lors de l’export CSV.', 'error');
+        return;
+      }
+      const csv = [
+        'Date,Employé',
+        ...data.map(p => `"${new Date(p.timestamp).toLocaleString()}","${p.employees?.full_name || 'Inconnu'}"`),
+      ].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'pointages.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    async function loadStats() {
+      document.getElementById('loader').style.display = 'block';
+      const { data: total, error: totalError } = await supabase.from('pointages').select('id', { count: 'exact' });
+      const { data: today, error: todayError } = await supabase
+        .from('pointages')
+        .select('id', { count: 'exact' })
+        .gte('timestamp', new Date().toISOString().split('T')[0]);
+      const { data: active, error: activeError } = await supabase
+        .from('pointages')
+        .select('employee_id', { count: 'exact', distinct: true })
+        .gte('timestamp', new Date().toISOString().split('T')[0]);
+      const { data: byDay, error: byDayError } = await supabase
+        .from('pointages')
+        .select('timestamp')
+        .gte('timestamp', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+        .order('timestamp');
+      document.getElementById('loader').style.display = 'none';
+
+      if (totalError || todayError || activeError || byDayError) {
+        showToast('Erreur lors du chargement des stats.', 'error');
+        return;
+      }
+
+      const dailyCounts = byDay.reduce((acc, p) => {
+        const date = new Date(p.timestamp).toLocaleDateString();
+        acc[date] = (acc[date] || 0) + 1;
+        return acc;
+      }, {});
+      const labels = Object.keys(dailyCounts);
+      const data = Object.values(dailyCounts);
+
+      if (chart) chart.destroy();
+      chart = new Chart(document.getElementById('statsChart'), {
+        type: 'bar',
+        data: {
+          labels: ['Total', 'Aujourd’hui', 'Actifs aujourd’hui', ...labels],
+          datasets: [{
+            label: 'Pointages',
+            data: [total.length, today.length, active.length, ...data],
+            backgroundColor: '#4299e1',
+          }],
+        },
+        options: {
+          scales: { y: { beginAtZero: true } },
+          plugins: { legend: { display: false } },
+        },
+      });
+    }
+
+    async function loadSelfies() {
+      document.getElementById('loader').style.display = 'block';
+      const { data, error } = await supabase.from('pointages').select('timestamp, selfie_url, employees(full_name)').order('timestamp', { ascending: false });
+      document.getElementById('loader').style.display = 'none';
+      if (error) {
+        showToast('Erreur lors du chargement des selfies.', 'error');
+        return;
+      }
+      const selfiesByDay = data.reduce((acc, p) => {
+        const date = new Date(p.timestamp).toLocaleDateString();
+        acc[date] = acc[date] || [];
+        acc[date].push({ url: p.selfie_url, name: p.employees?.full_name || 'Inconnu' });
+        return acc;
+      }, {});
+      const selfiesDiv = document.getElementById('selfies');
+      selfiesDiv.innerHTML = '';
+      for (const [date, selfies] of Object.entries(selfiesByDay)) {
+        const dayDiv = document.createElement('div');
+        dayDiv.innerHTML = `<h3>${date}</h3>`;
+        selfies.forEach(s => {
+          const img = document.createElement('img');
+          img.src = s.url;
+          img.alt = `Selfie de ${s.name}`;
+          img.title = s.name;
+          img.style.width = '100px';
+          img.style.borderRadius = '4px';
+          img.style.margin = '4px';
+          dayDiv.appendChild(img);
+        });
+        selfiesDiv.appendChild(dayDiv);
+      }
+    }
+
+    async function loadLogs() {
+      document.getElementById('loader').style.display = 'block';
+      const { data, error } = await supabase.from('logs').select('timestamp, event, user_id').order('timestamp', { ascending: false });
+      document.getElementById('loader').style.display = 'none';
+      if (error) {
+        showToast('Erreur lors du chargement des logs.', 'error');
+        return;
+      }
+      const tbody = document.querySelector('#logsTable tbody');
+      tbody.innerHTML = '';
+      data.forEach(log => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${new Date(log.timestamp).toLocaleString()}</td>
+          <td>${log.event}</td>
+          <td>${log.user_id}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    document.getElementById('createEmpBtn').onclick = async () => {
+      const email = document.getElementById('empEmail').value.trim();
+      const password = document.getElementById('empPass').value;
+      const full_name = document.getElementById('empName').value.trim();
+      const shift = document.getElementById('empShift').value;
+
+      if (!email || !password) {
+        showToast('Email et mot de passe requis', 'error');
+        return;
+      }
+      if (!/^(?=.*[A-Z])(?=.*\d).{8,}$/.test(password)) {
+        showToast('Mot de passe doit avoir 8+ caractères, 1 majuscule, 1 chiffre.', 'error');
+        return;
+      }
+
+      document.getElementById('loader').style.display = 'block';
+      const { data: session } = await supabase.auth.getSession();
+      const token = session?.session?.access_token;
+      if (!token) {
+        showToast('Session expirée, reconnecte-toi.', 'error');
+        document.getElementById('loader').style.display = 'none';
+        return;
+      }
+
+      const res = await fetch('/functions/v1/create-employee', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email, password, full_name, shift })
+      });
+
+      document.getElementById('loader').style.display = 'none';
+      if (!res.ok) {
+        const txt = await res.text();
+        showToast(`Erreur: ${txt}`, 'error');
+        return;
+      }
+
+      showToast('Employé créé avec succès !', 'success');
+      await supabase.from('logs').insert({
+        event: `Création employé: ${email}`,
+        user_id: (await supabase.auth.getUser()).data.user.id,
+      });
+      loadEmployees();
+      document.getElementById('empEmail').value = '';
+      document.getElementById('empPass').value = '';
+      document.getElementById('empName').value = '';
+      document.getElementById('empShift').value = 'Non défini';
+    };
+
+    document.getElementById('filterBtn').onclick = _.debounce(() => {
+      const filterEmployee = document.getElementById('filterEmployee').value.trim();
+      const filterDate = document.getElementById('filterDate').value;
+      page = 1;
+      loadPointages(filterEmployee, filterDate);
+    }, 300);
+
+    document.getElementById('prevPageBtn').onclick = () => {
+      if (page > 1) {
+        page--;
+        loadPointages(
+          document.getElementById('filterEmployee').value.trim(),
+          document.getElementById('filterDate').value
+        );
+      }
+    };
+
+    document.getElementById('nextPageBtn').onclick = () => {
+      page++;
+      loadPointages(
+        document.getElementById('filterEmployee').value.trim(),
+        document.getElementById('filterDate').value
+      );
+    };
+
+    document.getElementById('exportCsvBtn').onclick = exportCsv;
+    document.getElementById('statsBtn').onclick = loadStats;
+    document.getElementById('selfiesBtn').onclick = loadSelfies;
+    document.getElementById('logsBtn').onclick = loadLogs;
+
+    document.getElementById('downloadQrBtn').onclick = () => {
+      html2canvas(document.getElementById('qrcode')).then(canvas => {
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = 'qrcode.png';
+        link.click();
+      });
+    };
+
+    QRCode.toCanvas(document.getElementById('qrcode'), 'POINTAGE_QR_FIXE', { width: 200 }, err => {
+      if (err) console.error(err);
+    });
+
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) {
+        location.href = 'index.html';
+        return;
+      }
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+      if (profile?.role !== 'admin') {
+        location.href = 'employe.html';
+      } else {
+        loadEmployees();
+        loadPointages();
+      }
+    });
+
+    window.deleteEmployee = deleteEmployee;
+  </script>
+</body>
+</html>
