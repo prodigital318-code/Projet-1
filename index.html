@@ -27,40 +27,66 @@
       const msg = document.getElementById('msg');
       msg.textContent = message;
       msg.className = `msg ${type}`;
-      setTimeout(() => (msg.textContent = ''), 3000);
+      setTimeout(() => (msg.textContent = ''), 5000); // Augmenté à 5s pour lire les erreurs
     }
 
     async function redirect(uid) {
-      const { data, error } = await supabase.from('profiles').select('role').eq('id', uid).single();
-      if (error || !data) {
-        showToast('Erreur : Profil non trouvé.', 'error');
-        return;
-      }
-      if (data.role === 'admin') {
-        location.href = 'admin.html';
-      } else {
-        location.href = 'employe.html';
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', uid)
+          .single();
+        if (error) {
+          showToast(`Erreur lors de la récupération du rôle : ${error.message}`, 'error');
+          console.error('Erreur redirection:', error);
+          return;
+        }
+        if (!data) {
+          showToast('Profil non trouvé pour cet utilisateur.', 'error');
+          return;
+        }
+        if (data.role === 'admin') {
+          location.href = 'admin.html';
+        } else {
+          location.href = 'employe.html';
+        }
+      } catch (e) {
+        showToast(`Erreur inattendue : ${e.message}`, 'error');
+        console.error('Erreur redirection:', e);
       }
     }
 
     document.getElementById('loginBtn').onclick = async () => {
       const email = document.getElementById('email').value.trim();
-      const pass = document.getElementById('password').value.trim();
-      if (!email || !pass) {
+      const password = document.getElementById('password').value.trim();
+      if (!email || !password) {
         showToast('Veuillez remplir email et mot de passe.', 'error');
         return;
       }
-      if (!/^(?=.*[A-Z])(?=.*\d).{8,}$/.test(pass)) {
+      if (!/^(?=.*[A-Z])(?=.*\d).{8,}$/.test(password)) {
         showToast('Mot de passe doit avoir 8+ caractères, 1 majuscule, 1 chiffre.', 'error');
         return;
       }
       document.getElementById('loader').style.display = 'block';
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
-      document.getElementById('loader').style.display = 'none';
-      if (error) {
-        showToast('Erreur lors de la connexion.', 'error');
-      } else {
-        await redirect(data.user.id);
+
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        document.getElementById('loader').style.display = 'none';
+        if (error) {
+          showToast(`Erreur de connexion : ${error.message}`, 'error');
+          console.error('Erreur auth:', error);
+        } else if (data.user) {
+          showToast('Connexion réussie, redirection...', 'success');
+          await redirect(data.user.id);
+        } else {
+          showToast('Aucun utilisateur retourné.', 'error');
+          console.error('Aucun utilisateur:', data);
+        }
+      } catch (e) {
+        document.getElementById('loader').style.display = 'none';
+        showToast(`Erreur inattendue : ${e.message}`, 'error');
+        console.error('Erreur globale:', e);
       }
     };
 
@@ -71,20 +97,41 @@
         return;
       }
       document.getElementById('loader').style.display = 'block';
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.href,
-      });
-      document.getElementById('loader').style.display = 'none';
-      if (error) {
-        showToast('Erreur lors de la réinitialisation.', 'error');
-      } else {
-        showToast('Lien de réinitialisation envoyé.');
+      try {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.href, // Redirige ici après réinitialisation
+        });
+        document.getElementById('loader').style.display = 'none';
+        if (error) {
+          showToast(`Erreur lors de la réinitialisation : ${error.message}`, 'error');
+          console.error('Erreur reset:', error);
+        } else {
+          showToast('Lien de réinitialisation envoyé. Vérifiez votre email.', 'success');
+        }
+      } catch (e) {
+        document.getElementById('loader').style.display = 'none';
+        showToast(`Erreur inattendue : ${e.message}`, 'error');
+        console.error('Erreur reset:', e);
       }
     };
 
+    // Vérification initiale de la session
     supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) redirect(user.id);
+      if (user) {
+        showToast('Utilisateur déjà connecté, redirection...', 'info');
+        redirect(user.id);
+      }
+    });
+
+    // Gestion des erreurs réseau ou de configuration
+    supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        showToast('Déconnexion détectée.', 'info');
+      } else if (event === 'TOKEN_REFRESH_ERROR') {
+        showToast('Erreur de rafraîchissement du token. Reconnecte-toi.', 'error');
+        console.error('Token refresh error:', session);
+      }
     });
   </script>
 </body>
-  </html>
+</html>
