@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pointage Employé</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
+</head>
+<body>
+  <div class="card">
+    <h1>Pointage</h1>
+    <button id="logoutBtn" aria-label="Déconnexion"><i class="fas fa-sign-out-alt"></i> Déconnexion</button>
+    <video id="camera" autoplay></video>
+    <button id="scanBtn"><i class="fas fa-qrcode"></i> Scanner QR</button>
+    <div id="loader" class="loader" style="display: none;"><i class="fas fa-spinner fa-spin"></i> Chargement...</div>
+    <div id="msg" class="msg"></div>
+
+    <h2>Mes pointages</h2>
+    <table id="myPointagesTable">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Selfie</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script type="module">
+    import { supabase } from './config.js';
+
+    let stream = null;
+
+    function showToast(message, type = 'info') {
+      const msg = document.getElementById('msg');
+      msg.textContent = message;
+      msg.className = `msg ${type}`;
+      setTimeout(() => (msg.textContent = ''), 3000);
+    }
+
+    async function takeSelfie(video) {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      return canvas.toDataURL('image/jpeg');
+    }
+
+    async function uploadSelfie(selfieDataUrl, userId, timestamp) {
+      const fileName = `selfie_${userId}_${timestamp}.jpg`;
+      const blob = await (await fetch(selfieDataUrl)).blob();
+      const { error } = await supabase.storage
+        .from('selfies')
+        .upload(fileName, blob, { contentType: 'image/jpeg' });
+
+      if (error) {
+        throw new Error('Erreur lors de l’upload du selfie.');
+      }
+
+      const { data, error: signError } = await supabase.storage
+        .from('selfies')
+        .createSignedUrl(fileName, 3600);
+      if (signError) {
+        throw new Error('Erreur lors de la création de l’URL signée.');
+      }
+      return data.signedUrl;
+    }
+
+    async function loadMyPointages() {
+      document.getElementById('loader').style.display = 'block';
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data, error } = await supabase
+        .from('pointages')
+        .select('timestamp, selfie_url')
+        .eq('user_id', user.id)
+        .order('timestamp', { ascending: false });
+      document.getElementById('loader').style.display = 'none';
+      if (error) {
+        showToast('Erreur lors du chargement des pointages.', 'error');
+        return;
+      }
+      const tbody = document.querySelector('#myPointagesTable tbody');
+      tbody.innerHTML = '';
+      data.forEach(p => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${new Date(p.timestamp).toLocaleString()}</td>
+          <td><a href="${p.selfie_url}" target="_blank" aria-label="Voir selfie">Voir</a></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function startScanner() {
+      const video = document.getElementById('camera');
+      const msg = document.getElementById('msg');
+
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
+      }
+
+      if (navigator.mediaDevices.getUserMedia) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+          video.srcObject = stream;
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+
+          function scan() {
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+              canvas.height = video.videoHeight;
+              canvas.width = video.videoWidth;
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+              if (code) {
+                msg.textContent = `QR détecté : ${code.data}`;
+                if (code.data === 'POINTAGE_QR_FIXE') {
+                  stream.getTracks().forEach(track => track.stop());
+                  video.srcObject = null;
+                  document.getElementById('loader').style.display = 'block';
+                  takeSelfie(video).then(selfieDataUrl => {
+                    supabase.auth.getUser().then(async ({ data: { user } }) => {
+                      const timestamp = new Date().toISOString();
+                      const { data: employee, error: employeeError } = await supabase
+                        .from('employees')
+                        .select('id')
+                        .eq('email', user.email)
+                        .single();
+                      if (employeeError || !employee) {
+                        showToast('Erreur : Employé non trouvé.', 'error');
+                        msg.textContent = 'Erreur : Employé non trouvé.';
+                        document.getElementById('loader').style.display = 'none';
+                        return;
+                      }
+                      uploadSelfie(selfieDataUrl, user.id, timestamp.replace(/[:.]/g, '-'))
+                        .then(selfieUrl => {
+                          supabase.from('pointages')
+                            .insert([
+                              {
+                                user_id: user.id,
+                                timestamp,
+                                selfie_url: selfieUrl,
+                                employee_id: employee.id,
+                              },
+                            ])
+                            .then(() => {
+                              showToast('Pointage et selfie enregistrés !');
+                              msg.classList.add('success');
+                              msg.textContent = 'Pointage enregistré !';
+                              loadMyPointages();
+                            })
+                            .catch(() => {
+                              showToast('Erreur lors de l’enregistrement du pointage.', 'error');
+                              msg.textContent = 'Erreur lors de l’enregistrement.';
+                            })
+                            .finally(() => {
+                              document.getElementById('loader').style.display = 'none';
+                            });
+                        })
+                        .catch(() => {
+                          showToast('Erreur lors de l’upload du selfie.', 'error');
+                          msg.textContent = 'Erreur lors de l’upload du selfie.';
+                          document.getElementById('loader').style.display = 'none';
+                        });
+                    });
+                  });
+                } else {
+                  showToast('QR invalide.', 'error');
+                  msg.textContent = 'QR invalide.';
+                }
+              } else {
+                msg.textContent = 'Aucun QR détecté. Approchez le code.';
+              }
+            }
+            if (video.srcObject) {
+              requestAnimationFrame(scan);
+            }
+          }
+
+          showToast('Caméra activée, scannez le QR.');
+          scan();
+        } catch (err) {
+          showToast('Erreur d’accès à la caméra.', 'error');
+          msg.textContent = 'Erreur d’accès à la caméra.';
+        }
+      } else {
+        showToast('Caméra non disponible.', 'error');
+        msg.textContent = 'Caméra non disponible.';
+      }
+    }
+
+    document.getElementById('scanBtn').onclick = startScanner;
+
+    document.getElementById('logoutBtn').onclick = async () => {
+      await supabase.auth.signOut();
+      location.href = 'index.html';
+    };
+
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) {
+        location.href = 'index.html';
+      } else {
+        loadMyPointages();
+      }
+    });
+  </script>
+</body>
+</html>
